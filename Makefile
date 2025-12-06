@@ -20,6 +20,10 @@ lint: collection-cleanup collection-prep
 sanity: collection-cleanup collection-prep
 	poetry run tests/run-sanity.sh
 
+.PHONY: units
+units: collection-cleanup collection-prep
+	poetry run tests/run-units.sh
+
 .PHONY: integration
 integration: collection-cleanup collection-prep
 	poetry run tests/run-integration.sh
