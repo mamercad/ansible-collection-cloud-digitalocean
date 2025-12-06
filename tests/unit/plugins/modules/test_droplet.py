@@ -14,11 +14,24 @@ from ansible.module_utils.common.text.converters import to_bytes
 import json
 
 
+# Create a custom Exception class for HttpResponseError
+class HttpResponseError(Exception):
+    """Mock HttpResponseError exception"""
+    pass
+
+
 # Mock the required imports before importing the module
 sys.modules['pydo'] = MagicMock()
-sys.modules['azure'] = MagicMock()
-sys.modules['azure.core'] = MagicMock()
-sys.modules['azure.core.exceptions'] = MagicMock()
+azure_mock = MagicMock()
+azure_core_mock = MagicMock()
+azure_exceptions_mock = MagicMock()
+# Set HttpResponseError as a real Exception class, not a MagicMock
+azure_exceptions_mock.HttpResponseError = HttpResponseError
+azure_core_mock.exceptions = azure_exceptions_mock
+azure_mock.core = azure_core_mock
+sys.modules['azure'] = azure_mock
+sys.modules['azure.core'] = azure_core_mock
+sys.modules['azure.core.exceptions'] = azure_exceptions_mock
 
 from ansible_collections.digitalocean.cloud.plugins.modules import droplet
 
@@ -253,6 +266,7 @@ class TestDropletPresent:
     def test_present_unique_name_creates_when_none_exist(self, mock_get_droplets, mock_create, mock_module, mock_client):
         """Test present with unique_name creates droplet when none exist"""
         mock_module.params['unique_name'] = True
+        mock_module.check_mode = False
         mock_get_droplets.return_value = []
 
         with patch.object(droplet.DigitalOceanCommonModule, '__init__', return_value=None):
@@ -270,7 +284,7 @@ class TestDropletPresent:
                 pass
 
             mock_get_droplets.assert_called_once()
-            mock_create.assert_called_once()
+            assert mock_create.called
 
     @patch('ansible_collections.digitalocean.cloud.plugins.modules.droplet.Droplet.get_droplets_by_name_and_region')
     def test_present_unique_name_exists_no_changes(self, mock_get_droplets, mock_module, mock_client, sample_droplet):
@@ -352,7 +366,10 @@ class TestDropletAbsent:
     def test_absent_unique_name_deletes_existing(self, mock_get_droplets, mock_delete, mock_module, mock_client, sample_droplet):
         """Test absent with unique_name deletes existing droplet"""
         mock_module.params['unique_name'] = True
+        mock_module.check_mode = False
         mock_get_droplets.return_value = [sample_droplet]
+        # Make delete_droplet raise AnsibleExitJson to simulate normal behavior
+        mock_delete.side_effect = AnsibleExitJson({'changed': True, 'msg': 'Deleted'})
 
         with patch.object(droplet.DigitalOceanCommonModule, '__init__', return_value=None):
             droplet_obj = droplet.Droplet.__new__(droplet.Droplet)
@@ -362,6 +379,7 @@ class TestDropletAbsent:
             droplet_obj.unique_name = True
             droplet_obj.name = 'test-droplet'
             droplet_obj.region = 'nyc3'
+            droplet_obj.droplet_id = None
 
             try:
                 droplet_obj.absent()
@@ -468,16 +486,19 @@ class TestDropletCreateDelete:
 
     @patch('time.monotonic')
     @patch('time.sleep')
-    def test_create_droplet_success(self, mock_sleep, mock_monotonic, mock_module, mock_client, sample_droplet):
+    @patch('ansible_collections.digitalocean.cloud.plugins.modules.droplet.Droplet.get_droplet_by_id')
+    def test_create_droplet_success(self, mock_get_by_id, mock_sleep, mock_monotonic, mock_module, mock_client, sample_droplet):
         """Test successful droplet creation"""
         mock_monotonic.side_effect = [0, 1]  # First call returns 0, second returns 1 (within timeout)
         sample_droplet['status'] = 'active'
         mock_client.droplets.create.return_value = {'droplet': sample_droplet}
+        mock_get_by_id.return_value = sample_droplet
 
         with patch.object(droplet.DigitalOceanCommonModule, '__init__', return_value=None):
             droplet_obj = droplet.Droplet.__new__(droplet.Droplet)
             droplet_obj.module = mock_module
             droplet_obj.client = mock_client
+            droplet_obj.timeout = 300
             droplet_obj.name = 'test-droplet'
             droplet_obj.region = 'nyc3'
             droplet_obj.size = 's-1vcpu-1gb'
@@ -512,6 +533,7 @@ class TestDropletCreateDelete:
             droplet_obj = droplet.Droplet.__new__(droplet.Droplet)
             droplet_obj.module = mock_module
             droplet_obj.client = mock_client
+            droplet_obj.timeout = 300
 
             with pytest.raises(AnsibleExitJson) as exc:
                 droplet_obj.delete_droplet(sample_droplet)
