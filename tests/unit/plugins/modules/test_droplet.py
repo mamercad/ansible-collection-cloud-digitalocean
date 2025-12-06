@@ -8,7 +8,7 @@ __metaclass__ = type
 
 import pytest
 import sys
-from unittest.mock import MagicMock, Mock, patch, call
+from unittest.mock import MagicMock, patch
 from ansible.module_utils import basic
 from ansible.module_utils.common.text.converters import to_bytes
 import json
